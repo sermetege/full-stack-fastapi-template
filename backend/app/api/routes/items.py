@@ -2,7 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from sqlmodel import func, select
+from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models import Item, ItemCreate, ItemPublic, ItemsPublic, ItemUpdate, Message
@@ -20,23 +20,23 @@ def read_items(
 
     if current_user.is_superuser:
         count_statement = select(func.count()).select_from(Item)
-        count = session.exec(count_statement).one()
+        count = session.execute(count_statement).scalar_one()
         statement = select(Item).offset(skip).limit(limit)
-        items = session.exec(statement).all()
+        items = session.execute(statement).scalars().all()
     else:
         count_statement = (
             select(func.count())
             .select_from(Item)
             .where(Item.owner_id == current_user.id)
         )
-        count = session.exec(count_statement).one()
+        count = session.execute(count_statement).scalar_one()
         statement = (
             select(Item)
             .where(Item.owner_id == current_user.id)
             .offset(skip)
             .limit(limit)
         )
-        items = session.exec(statement).all()
+        items = session.execute(statement).scalars().all()
 
     return ItemsPublic(data=items, count=count)
 
@@ -61,7 +61,8 @@ def create_item(
     """
     Create new item.
     """
-    item = Item.model_validate(item_in, update={"owner_id": current_user.id})
+    item_data = item_in.model_dump()
+    item = Item(**item_data, owner_id=current_user.id)
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -85,7 +86,8 @@ def update_item(
     if not current_user.is_superuser and (item.owner_id != current_user.id):
         raise HTTPException(status_code=400, detail="Not enough permissions")
     update_dict = item_in.model_dump(exclude_unset=True)
-    item.sqlmodel_update(update_dict)
+    for field, value in update_dict.items():
+        setattr(item, field, value)
     session.add(item)
     session.commit()
     session.refresh(item)
